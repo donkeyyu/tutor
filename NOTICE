@@ -1,0 +1,5 @@
+tutor
+Portions of engine/src/tutor_engine (mastery.py, policy.py, scheduler.py,
+teaching.py) and plugin/src/prompt.ts are adapted from DeepTutor
+(https://github.com/HKUDS/DeepTutor, commit 60fb3bd),
+Copyright HKUDS, licensed under the Apache License, Version 2.0.
