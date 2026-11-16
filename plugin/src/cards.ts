@@ -5,10 +5,17 @@
 // generic result view for other clients. Replay needs no engine call.
 import type { ToolResult, ToolResultView } from '@deepseek-ai/dsh-tools'
 
-/** What a card carries: a header line and a Markdown body. */
+/** A rendered textbook page (cropped to the chapter), as a data: URL. */
+export interface PageImage {
+  page: number
+  src: string
+}
+
+/** What a card carries: a header line, a markdown body, and page images shown above the body. */
 export interface Card {
   title: string
   body: string
+  images?: PageImage[]
 }
 
 type Obj = Record<string, any>
@@ -63,17 +70,20 @@ export function gradeCard(value: Obj): Card {
   return { title: `${verdict}${mastery}${value.mastered ? ' · 已掌握' : ''}`, body: parts.join('\n\n') }
 }
 
-/** tutor_textbook read: the chapter pages shown, then the study notes on them. */
-export function knowledgeCard(value: Obj): Card {
+/** tutor_textbook read: the chapter pages shown (as images when rendered, else their text), then the study notes on them. */
+export function knowledgeCard(value: Obj, images: PageImage[] = []): Card {
   const [from, to] = value.shown ?? []
-  const pages = (value.text ?? []).filter((p: Obj) => p.text?.trim())
+  const imaged = new Set(images.map(img => img.page))
+  const pages = (value.text ?? []).filter((p: Obj) => p.text?.trim() && !imaged.has(p.page))
     .map((p: Obj) => `**第 ${p.page} 页**\n\n${p.text.trim()}`)
   const notes = (value.notes ?? []).map((n: Obj) => `**${n.title}** · 第 ${n.page} 页${n.content_type ? ` · ${n.content_type}` : ''}\n\n${n.text}`)
   const parts = [...pages]
-  if (!pages.length) parts.push('_这些页面没有可提取的文字（可能是图片页）。_')
+  if (!pages.length && !images.length) parts.push('_这些页面没有可提取的文字（可能是图片页）。_')
   if (notes.length) parts.push('---', '### 学习笔记', ...notes)
   if (value.next_page) parts.push(`_续读：第 ${value.next_page} 页起_`)
-  return { title: `知识卡 · ${value.title} · 第 ${from === to ? from : `${from}–${to}`} 页`, body: parts.join('\n\n') }
+  const card: Card = { title: `知识卡 · ${value.title} · 第 ${from === to ? from : `${from}–${to}`} 页`, body: parts.join('\n\n') }
+  if (images.length) card.images = images
+  return card
 }
 
 /** Read a card back from persisted meta; anything else falls back to the raw result. */

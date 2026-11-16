@@ -10,6 +10,10 @@ Read live on every call, so edits in Obsidian show up at once:
   (box notes and imported 课本解读笔记). Only top-level scalar keys are read.
 - The PDF text, extracted once with ``pdftotext`` and cached by SHA-256 in
   ``cache_dir`` (re-extracted when the file's size or mtime changes).
+- Page images for the learner's card, rendered with ``pdftoppm`` (found next to
+  ``pdftotext``) and cropped to the chapter's start/end ``y`` on its first and
+  last page. Cached as JPEG under ``cache_dir/<sha256>/``. Rendering failures
+  only drop the image; the text still comes back.
 
 A chapter is addressed by ``ref`` = ``<textbook_id>/<chapter_id>``.
 """
@@ -28,6 +32,8 @@ from typing import Any
 from tutor_engine.models import TutorError
 
 READ_PAGES = 4  # pages per read call; keeps tool results small
+IMAGE_DPI = 130  # readable body text at ~150 KB per JPEG page
+_PAGE_SIZE = re.compile(r"^Page\s+(\d+)\s+size:\s+([\d.]+)\s+x\s+([\d.]+)", re.M)
 _FRONT_KEY = re.compile(r"^([A-Za-z_][\w-]*):\s*(.*)$")
 _WIKILINK = re.compile(r"!?\[\[([^\]|]*)(?:\|([^\]]*))?\]\]")
 _CALLOUT = re.compile(r"^>\s*\[!\w+\][+-]?\s*", re.M)
@@ -42,6 +48,8 @@ class Chapter:
     parent: str
     first: int
     last: int
+    top: float = 0.0  # y where the chapter starts on ``first`` (0 = page top)
+    bottom: float = 1.0  # y where it ends on ``last``
 
 
 @dataclass
@@ -157,6 +165,48 @@ class Library:
         tmp.replace(cache)
         return pages
 
+    def _tool(self, name: str) -> str:
+        """A poppler tool beside the configured ``pdftotext``."""
+        path = Path(self.pdftotext)
+        return str(path.with_name(name)) if path.parent != Path() else name
+
+    def images(self, book: Book, chapter: Chapter, start: int, end: int) -> list[dict[str, Any]]:
+        """Cropped JPEG of each page in ``start..end``; pages that fail to render are left out."""
+        crops = {
+            p: (chapter.top if p == chapter.first else 0.0, chapter.bottom if p == chapter.last else 1.0)
+            for p in range(start, end + 1)
+        }
+        crops = {p: (t, b) if b - t > 0.02 else (0.0, 1.0) for p, (t, b) in crops.items()}
+        folder = self.cache_dir / book.sha256
+        paths = {p: folder / f"p{p}-{t:.4f}-{b:.4f}-{IMAGE_DPI}.jpg" for p, (t, b) in crops.items()}
+        try:
+            missing = [p for p, path in paths.items() if not path.is_file()]
+            if missing:
+                info = subprocess.run(
+                    [self._tool("pdfinfo"), "-f", str(min(missing)), "-l", str(max(missing)), str(book.pdf)],
+                    capture_output=True, check=True, timeout=60,
+                ).stdout.decode("utf-8", "replace")
+                heights = {int(m[1]): float(m[3]) for m in _PAGE_SIZE.finditer(info)}
+                folder.mkdir(parents=True, exist_ok=True)
+                for p in missing:
+                    self._render(book, p, crops[p], heights.get(p), paths[p])
+        except (OSError, subprocess.SubprocessError):
+            pass
+        return [{"page": p, "path": str(path.resolve())} for p, path in paths.items() if path.is_file()]
+
+    def _render(self, book: Book, page: int, crop: tuple[float, float], height_pts: float | None, out: Path) -> None:
+        args = [self._tool("pdftoppm"), "-q", "-f", str(page), "-l", str(page), "-r", str(IMAGE_DPI),
+                "-jpeg", "-jpegopt", "quality=75", "-singlefile"]
+        top, bottom = crop
+        if height_pts and (top, bottom) != (0.0, 1.0):
+            px = height_pts / 72 * IMAGE_DPI
+            # Full width (-W 0 means the rest of the page); a few pixels of margin above the heading.
+            y = max(0, round(top * px) - 8)
+            args += ["-x", "0", "-y", str(y), "-W", "0", "-H", str(round(bottom * px) - y)]
+        root = out.with_name(f"{out.stem}-tmp")  # pdftoppm appends ".jpg"
+        subprocess.run([*args, str(book.pdf), str(root)], capture_output=True, check=True, timeout=60)
+        out.with_name(f"{root.name}.jpg").replace(out)
+
     # -- tool actions ---------------------------------------------------------
 
     def list(self) -> dict[str, Any]:
@@ -222,6 +272,7 @@ class Library:
         end = min(chapter.last, start + READ_PAGES - 1)
         pages = self.pages(book)
         return {
+            "images": self.images(book, chapter, start, end),
             "ref": chapter.ref,
             "title": chapter.title,
             "pages": [chapter.first, chapter.last],
@@ -244,11 +295,15 @@ def _book(raw: dict[str, Any], vault: Path) -> Book:
         first = int(c["start"]["page"])
         end = c.get("end") or {"page": page_count or first, "y": 1}
         last = int(end["page"])
-        if last > first and float(end.get("y", 1)) <= 0:
-            last -= 1  # ends at the top of that page
+        bottom = float(end.get("y", 1))
+        if last > first and bottom <= 0:
+            last, bottom = last - 1, 1.0  # ends at the top of that page
+        if last <= first:
+            last, bottom = first, bottom if last == first else 1.0
         chapters.append(
             Chapter(f"{textbook_id}/{c['id']}", str(c["id"]), str(c.get("title", "")),
-                    int(c.get("level", 1)), str(c.get("parent_id") or ""), first, max(first, last))
+                    int(c.get("level", 1)), str(c.get("parent_id") or ""), first, last,
+                    float(c["start"].get("y", 0)), bottom)
         )
     return Book(textbook_id, str(raw["pdf_sha256"]), vault / str(raw["pdf_path"]), page_count, chapters)
 

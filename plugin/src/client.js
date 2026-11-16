@@ -29,6 +29,13 @@ window.__ModuleLoader__.load({
       return { title: `知识卡 · ${value.title} · 第 ${from === to ? from : `${from}–${to}`} 页`, body: parts.join('\n\n') }
     }
 
+    function cardMeta(toolName, block) {
+      if (block.isError) return null
+      if (typeof block.meta?.title === 'string' && typeof block.meta.body === 'string') return block.meta
+      const knowledge = toolName === 'tutor_textbook' && knowledgeResult(block)
+      return knowledge ? legacyKnowledgeCard(knowledge) : null
+    }
+
     function questionChoices(block, body) {
       try {
         const question = JSON.parse(block.content.find(part => part.type === 'text').text).question
@@ -57,11 +64,14 @@ window.__ModuleLoader__.load({
         return h('div', { role: 'status' }, `${toolName} · ${t(phase === 'preparing' ? 'row.preparing' : 'bash.running')}`)
       }
       const knowledge = !block.isError && toolName === 'tutor_textbook' ? knowledgeResult(block) : null
-      const meta = block.meta && typeof block.meta.title === 'string' && typeof block.meta.body === 'string'
-        ? block.meta : knowledge ? legacyKnowledgeCard(knowledge) : null
-      const card = !block.isError && meta && typeof meta.title === 'string' && typeof meta.body === 'string'
+      const meta = cardMeta(toolName, block)
+      const card = meta !== null
       const text = (block.content ?? []).map(part => part.type === 'text' ? part.text : JSON.stringify(part)).join('\n')
       const question = card && toolName === 'tutor_quiz' ? questionChoices(block, meta.body) : null
+      // Textbook pages rendered from the PDF; only inline JPEG data is shown.
+      const images = card && Array.isArray(meta.images)
+        ? meta.images.filter(img => Number.isInteger(img?.page) && typeof img.src === 'string' && img.src.startsWith('data:image/jpeg;base64,'))
+        : []
       const answer = selected.join('')
       const nextPage = knowledge && Number.isInteger(knowledge.next_page) && knowledge.next_page > knowledge.shown[1]
         && (!Array.isArray(knowledge.pages) || knowledge.next_page <= knowledge.pages[1]) ? knowledge.next_page : null
@@ -103,7 +113,17 @@ window.__ModuleLoader__.load({
       },
       h('h3', { style: { margin: '0 0 20px', fontSize: '0.875rem', fontWeight: 500, color: 'var(--dsw-alias-label-secondary)' } }, card ? meta.title : toolName),
       card
-        ? h(MarkdownText, { text: question?.body ?? meta.body, labels })
+        ? images.length
+          ? h('div', null,
+            h('div', { style: { display: 'grid', gap: '16px', marginBottom: meta.body ? '20px' : 0 } },
+              images.map(img => h('figure', { key: img.page, style: { margin: 0 } },
+                h('img', {
+                  src: img.src, alt: `第 ${img.page} 页`, loading: 'lazy',
+                  style: { display: 'block', width: '100%', height: 'auto', borderRadius: '8px', background: '#fff' },
+                }),
+                h('figcaption', { style: { marginTop: '4px', fontSize: '0.75rem', color: 'var(--dsw-alias-label-secondary)' } }, `第 ${img.page} 页`)))),
+            meta.body && h(MarkdownText, { text: meta.body, labels }))
+          : h(MarkdownText, { text: question?.body ?? meta.body, labels })
         : h('pre', { style: { margin: 0, whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', color: block.isError ? 'var(--dsw-alias-state-error-primary)' : 'inherit' } }, text),
       question && h('div', {
         role: question.multiple ? 'group' : 'radiogroup', 'aria-label': '选择答案',
@@ -137,24 +157,68 @@ window.__ModuleLoader__.load({
       inspect && h('button', {
         type: 'button', onClick: inspect,
         style: { marginTop: '16px', padding: '4px 0', border: 0, background: 'transparent', font: 'inherit', fontSize: '0.75rem', color: 'var(--dsw-alias-label-secondary)', textDecoration: 'underline', textUnderlineOffset: '3px', cursor: 'pointer' },
-      }, t('row.inspect')),
-      // Tutor cards grow with the conversation instead of scrolling inside DSH's capped process pane.
-      card && h('style', null, `
-        [data-step-process-body]:has(> [data-step-process-content] [data-tutor-card]) {
-          max-height: none;
-          overflow-y: visible;
-          mask-image: none;
-          scrollbar-gutter: auto;
-        }
-      `))
+      }, t('row.inspect')))
+    }
+
+    function TutorTool(props) {
+      const meta = props.phase === 'result' && cardMeta(props.toolName, props.block)
+      if (!meta) return h(TutorCard, props)
+      return h('div', { 'data-tutor-tool': props.toolName, style: { color: 'var(--dsw-alias-label-secondary)' } },
+        meta.title,
+        props.inspect && h('button', {
+          type: 'button', onClick: props.inspect,
+          style: { marginLeft: '12px', padding: 0, border: 0, background: 'transparent', color: 'inherit', font: 'inherit', cursor: 'pointer', textDecoration: 'underline', textUnderlineOffset: '3px' },
+        }, props.t('row.inspect')))
+    }
+
+    function TutorConversationCard({ node, inspectCall, ...props }) {
+      return h(TutorCard, {
+        ...props, ...node.data, phase: 'result',
+        inspect: inspectCall && (() => inspectCall(node.data.block.callId)),
+      })
     }
 
     return {
-      inject: ['slots'],
+      inject: ['slots', 'uiConversation'],
       apply(ctx) {
+        const cardTool = name => name === 'tutor_quiz' || name === 'tutor_textbook'
+        // Project saved results at Turn level so both process disclosures leave them visible.
+        ctx.uiConversation.events.register({
+          kind: 'tutor-card', target: 'chat',
+          match: {
+            'tool/call': event => cardTool(event.data.name) ? { id: String(event.data.callId), role: 'start' } : null,
+            'tool/result': event => event.surfaceOp === 'append'
+              ? { id: String(event.data.message.source.callId), role: 'update' } : null,
+            'tool/ptc-dispatch': event => cardTool(event.data.name) ? { id: String(event.data.subCallId), role: 'start' } : null,
+          },
+          start: () => null,
+          update: () => null,
+          buildViewNode(context) {
+            const result = context.matches.findLast(match => match.event.type === 'tool/result' || match.event.type === 'tool/ptc-dispatch')
+            if (!result) return null
+            const { event } = result
+            const nested = event.type === 'tool/ptc-dispatch'
+            const call = context.matches.find(match => match.event.type === 'tool/call')
+            const toolName = nested ? event.data.name : call?.event.data.name
+            if (!cardTool(toolName)) return null
+            const block = {
+              kind: 'tool-result', callId: context.id, meta: event.data.meta,
+              content: nested ? event.data.content ?? [] : event.data.message.content,
+              isError: (nested ? event.data.isError : event.data.message.isError) === true,
+            }
+            if (!cardMeta(toolName, block)) return null
+            return {
+              key: context.key, id: context.id, kind: 'tutor-card', target: 'chat',
+              anchorSeq: event.seq, location: result.location, visibility: 'visible', groupTree: 'turn',
+              data: { toolName, block },
+            }
+          },
+        })
+        ctx.slots.inject('conversation.chat.node', () =>
+          ctx.slots.register({ name: 'conversation.chat.node', key: 'tutor-card', locale: 'conversation' }, TutorConversationCard))
         for (const key of ['tutor_quiz', 'tutor_grade', 'tutor_textbook']) {
           ctx.slots.inject('tool.call.toolview', () =>
-            ctx.slots.register({ name: 'tool.call.toolview', key, locale: 'conversation' }, TutorCard))
+            ctx.slots.register({ name: 'tool.call.toolview', key, locale: 'conversation' }, key === 'tutor_grade' ? TutorCard : TutorTool))
         }
       },
     }

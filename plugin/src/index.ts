@@ -1,12 +1,13 @@
 // DSH plugin: mounts the tutor tools and protocol. All state and decisions live
 // in the Python engine (../engine); these tools are thin JSON pass-throughs.
+import { readFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-system-prompt'
 import { defineTool, type ToolResult } from '@deepseek-ai/dsh-tools'
 import Schema from '@deepseek-ai/schemastery'
-import { type Card, gradeCard, knowledgeCard, presentCard, questionCard } from './cards.ts'
+import { type Card, type PageImage, gradeCard, knowledgeCard, presentCard, questionCard } from './cards.ts'
 import { callEngine, type EngineOptions } from './engine.ts'
 import { TUTOR_PROTOCOL } from './prompt.ts'
 
@@ -49,6 +50,31 @@ const carded = (card: (args: any, value: any) => Card | null) => ({
   presentResult: (_args: unknown, result: ToolResult) => presentCard(result),
 })
 
+/** Page images the engine rendered, inlined for the card. Unreadable files are left out. */
+function pageImages(value: any): PageImage[] {
+  return (Array.isArray(value?.images) ? value.images : []).flatMap((img: any) => {
+    try {
+      return [{ page: img.page, src: `data:image/jpeg;base64,${readFileSync(img.path).toString('base64')}` }]
+    } catch {
+      return []
+    }
+  })
+}
+
+/** Textbook reads: the model gets the JSON without image paths; the card gets the images. */
+const textbookOutput = {
+  output: {
+    schema: json.schema,
+    render: (args: unknown, value: unknown) => {
+      if (!value || typeof value !== 'object' || Array.isArray(value)) return json.render(args, value)
+      const { images: _images, ...rest } = value as Record<string, unknown>
+      return json.render(args, rest)
+    },
+    presentationMeta: (args: any, value: any) => (args.action === 'read' ? knowledgeCard(value, pageImages(value)) : null) as any,
+  },
+  presentResult: (_args: unknown, result: ToolResult) => presentCard(result),
+}
+
 const kpId = { type: 'string', description: 'knowledge_point_id from tutor_status, verbatim.' } as const
 
 export function apply(ctx: Context, config: Config) {
@@ -90,7 +116,7 @@ export function apply(ctx: Context, config: Config) {
       page: { type: 'integer', description: 'read: physical PDF page to start from (default: chapter start).' },
       limit: { type: 'integer', description: 'search: max hits, up to 30 (default 10).' },
     },
-    ...carded((args, value) => args.action === 'read' ? knowledgeCard(value) : null),
+    ...textbookOutput,
     execute: (args, exec) => call('textbook', args, exec.signal),
   }))
 

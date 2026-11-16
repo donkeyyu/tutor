@@ -41,6 +41,16 @@ test('tools reach the engine and keep the answer key server-side', async () => {
   assert.match(present('tutor_grade', { answer: 'B' }, graded).title, /^✓ 正确/)
   assert.equal(tools.get('tutor_grade').presentResult({}, { content: [], isError: true }), undefined)
   await assert.rejects(run('tutor_grade', { answer: 'x' }), { code: 'TUTOR_REFUSED' })
+  // Textbook reads: image paths stay out of the model's text; the card inlines the images.
+  const jpg = join(dir, 'p1.jpg')
+  writeFileSync(jpg, 'jpg')
+  const read = { ref: 'b/c', title: 'T', shown: [1, 2], text: [{ page: 1, text: 'ocr' }, { page: 2, text: 'two' }], notes: [],
+    images: [{ page: 1, path: jpg }, { page: 2, path: join(dir, 'gone.jpg') }] }
+  const textbook = tools.get('tutor_textbook').output
+  assert.ok(!textbook.render({ action: 'read' }, read)[0].text.includes('images'))
+  const meta = textbook.presentationMeta({ action: 'read' }, read)
+  assert.deepEqual(meta.images, [{ page: 1, src: `data:image/jpeg;base64,${Buffer.from('jpg').toString('base64')}` }])
+  assert.equal(meta.body, '**第 2 页**\n\ntwo')
   // The panel's index folder reaches the engine.
   await assert.rejects(run('tutor_textbook', { action: 'list' }), { code: 'TUTOR_REFUSED', message: /my-index/ })
 })

@@ -27,7 +27,7 @@ def library(tmp_path: Path) -> Library:
             {"id": "ch1", "title": "第一章", "level": 1, "parent_id": None,
              "start": {"page": 1, "y": 0}, "end": {"page": 3, "y": 1}},
             {"id": "1.1", "title": "1.1 正数和负数", "level": 2, "parent_id": "ch1",
-             "start": {"page": 2, "y": 0}, "end": {"page": 3, "y": 0}},
+             "start": {"page": 2, "y": 0.25}, "end": {"page": 3, "y": 0}},
         ],
     }), encoding="utf-8")
     (vault / "notes").mkdir()
@@ -68,6 +68,26 @@ def test_list_search_and_read(library: Library):
         library.read("book_x/1.1", page=3)
     with pytest.raises(TutorError):
         library.read("book_x/nope")
+
+
+def test_read_renders_page_images_cropped_to_the_chapter(library: Library, tmp_path: Path):
+    assert library.read("book_x/1.1")["images"] == []  # no pdftoppm: text only
+    log = tmp_path / "pdftoppm.log"
+    tools = {
+        "pdfinfo": "#!/bin/sh\nprintf 'Page    2 size: 500 x 720 pts\\n'\n",
+        # Logs its arguments and writes <root>.jpg like the real tool.
+        "pdftoppm": f'#!/bin/sh\necho "$@" >> "{log}"\neval root=\\${{$#}}\nprintf jpg > "$root.jpg"\n',
+    }
+    for name, script in tools.items():
+        (tmp_path / name).write_text(script, encoding="utf-8")
+        (tmp_path / name).chmod(0o755)
+
+    for _ in range(2):
+        images = library.read("book_x/1.1")["images"]
+        assert [i["page"] for i in images] == [2] and Path(images[0]["path"]).read_text() == "jpg"
+    # Starts at y=0.25 on page 2 (8 px margin), runs to the page bottom: 720 pt at 130 dpi = 1300 px.
+    assert log.read_text().count("\n") == 1  # second read hits the cache
+    assert "-x 0 -y 317 -W 0 -H 983" in log.read_text()
 
 
 def test_changed_pdf_is_refused(library: Library):

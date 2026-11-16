@@ -4,3 +4,4 @@ __pycache__/
 .pytest_cache/
 data/*.db*
 data/bank.jsonl
+data/textbook_cache/
