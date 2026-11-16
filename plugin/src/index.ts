@@ -4,8 +4,9 @@ import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-system-prompt'
-import { defineTool } from '@deepseek-ai/dsh-tools'
+import { defineTool, type ToolResult } from '@deepseek-ai/dsh-tools'
 import Schema from '@deepseek-ai/schemastery'
+import { type Card, gradeCard, knowledgeCard, presentCard, questionCard } from './cards.ts'
 import { callEngine, type EngineOptions } from './engine.ts'
 import { TUTOR_PROTOCOL } from './prompt.ts'
 
@@ -41,6 +42,12 @@ export const Config: Schema<Config> = Schema.object({
 })
 
 const json = { schema: { type: 'json' }, render: (_: unknown, value: unknown) => [{ type: 'text' as const, text: JSON.stringify(value) }] } as const
+
+/** JSON output plus a result card; `card` returns null for results shown raw. */
+const carded = (card: (args: any, value: any) => Card | null) => ({
+  output: { ...json, presentationMeta: (args: unknown, value: unknown) => card(args, value) as any },
+  presentResult: (_args: unknown, result: ToolResult) => presentCard(result),
+})
 
 const kpId = { type: 'string', description: 'knowledge_point_id from tutor_status, verbatim.' } as const
 
@@ -83,7 +90,7 @@ export function apply(ctx: Context, config: Config) {
       page: { type: 'integer', description: 'read: physical PDF page to start from (default: chapter start).' },
       limit: { type: 'integer', description: 'search: max hits, up to 30 (default 10).' },
     },
-    output: json,
+    ...carded((args, value) => args.action === 'read' ? knowledgeCard(value) : null),
     execute: (args, exec) => call('textbook', args, exec.signal),
   }))
 
@@ -128,7 +135,7 @@ export function apply(ctx: Context, config: Config) {
     name: 'tutor_quiz',
     description: 'Pose the next bank question for an objective (defaults to the current one). The answer key stays in the engine. If a question is already open it is returned unchanged. Show it verbatim, then wait.',
     parameters: { knowledge_point_id: kpId },
-    output: json,
+    ...carded((_args, value) => questionCard(value)),
     execute: (args, exec) => call('quiz', { knowledge_point_id: args.knowledge_point_id ?? '' }, exec.signal),
   }))
 
@@ -140,7 +147,7 @@ export function apply(ctx: Context, config: Config) {
       blanks: { type: 'array', items: { type: 'string' } },
       verdict: { type: 'string', enum: ['correct', 'partial', 'incorrect'], description: 'open questions only, after seeing the reference.' },
     },
-    output: json,
+    ...carded((_args, value) => gradeCard(value)),
     execute: (args, exec) => call('grade', args, exec.signal),
   }))
 

@@ -4,6 +4,7 @@ import { mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
+import { htmlToMarkdown, knowledgeCard } from '../src/cards.ts'
 import { apply, Config } from '../src/index.ts'
 
 test('tools reach the engine and keep the answer key server-side', async () => {
@@ -27,8 +28,33 @@ test('tools reach the engine and keep the answer key server-side', async () => {
   const quiz = await run('tutor_quiz')
   assert.deepEqual(quiz.question.options, { A: 'Lyon', B: 'Paris' })
   assert.ok(!('answer' in quiz.question) && !('explanation' in quiz.question))
-  assert.equal((await run('tutor_grade', { answer: 'B' })).correct, true)
+  // Cards: projected into persisted meta, then shown as a generic result view.
+  const present = (name: string, args: any, value: any) => {
+    const tool = tools.get(name)
+    return tool.presentResult(args, { content: [], isError: false, meta: tool.output.presentationMeta(args, value) })
+  }
+  const qCard = present('tutor_quiz', {}, quiz)
+  assert.equal(qCard.title, '题目 · 单选 · 中档')
+  assert.equal(qCard.content[0].text, 'Capital of France?\n\n**A.** Lyon\n\n**B.** Paris')
+  const graded = await run('tutor_grade', { answer: 'B' })
+  assert.equal(graded.correct, true)
+  assert.match(present('tutor_grade', { answer: 'B' }, graded).title, /^✓ 正确/)
+  assert.equal(tools.get('tutor_grade').presentResult({}, { content: [], isError: true }), undefined)
   await assert.rejects(run('tutor_grade', { answer: 'x' }), { code: 'TUTOR_REFUSED' })
   // The panel's index folder reaches the engine.
   await assert.rejects(run('tutor_textbook', { action: 'list' }), { code: 'TUTOR_REFUSED', message: /my-index/ })
+})
+
+test('cards render bank HTML and textbook pages as markdown', () => {
+  assert.equal(
+    htmlToMarkdown('<p>若\\(x<sup>2</sup>=4\\)，则 x=[[_]]&nbsp;<u> </u></p><img class="a" src="https://x/1.png" width="3">'),
+    '若$x^2=4$，则 x=____ ____\n\n![](https://x/1.png)',
+  )
+  const card = knowledgeCard({
+    title: '有理数', shown: [5, 6], next_page: 7,
+    text: [{ page: 5, text: '正数和负数' }, { page: 6, text: '' }],
+    notes: [{ title: '相反数', page: 6, content_type: '概念', text: '只有符号不同' }],
+  })
+  assert.equal(card.title, '知识卡 · 有理数 · 第 5–6 页')
+  assert.equal(card.body, '**第 5 页**\n\n正数和负数\n\n---\n\n### 学习笔记\n\n**相反数** · 第 6 页 · 概念\n\n只有符号不同\n\n_续读：第 7 页起_')
 })

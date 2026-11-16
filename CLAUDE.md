@@ -38,6 +38,8 @@ echo '{"action":"list"}' | PYTHONPATH=engine/src python3 -m tutor_engine \
 The model decides **how** to teach. Deterministic code decides **what comes next** and **whether the learner may advance**. Keep that split: never let a tool argument or model judgement award mastery, except `tutor_assess` for concept/design objectives.
 
 - `plugin/src/index.ts` is a thin DSH plugin. It registers the `tutor_*` tools and the `tutor:protocol` system-prompt section (`prompt.ts`). Each tool spawns `python -m tutor_engine <command>` once and passes JSON over stdin/stdout (`engine.ts`). Engine refusals become `TutorRefusal` (`HarnessError`, code `TUTOR_REFUSED`), and the model sees their message. Config defaults resolve `engine/` and `data/` relative to the repo root.
+- `plugin/src/cards.ts` builds question, grading, and textbook cards as `{title, body}` Markdown in `output.presentationMeta`. DSH web does not call `presentResult`: `plugin/src/client.js` registers `tool.call.toolview` entries and renders the saved metadata with DSH's `MarkdownText` (including math). Its `dsh.client` declaration and `./client` export in `plugin/package.json` make DSH discover this browser entry; restart DSH after changing that declaration. The plain-JS module factory needs no build step. `presentResult` remains available to other clients. The model still gets raw JSON, and replay needs no engine call.
+- Historical textbook reads without card metadata are rendered from validated saved JSON; parity with `knowledgeCard` is tested. Rich tutor cards use the main conversation scrollbar instead of DSH's capped process pane. The knowledge card's `续读` button appends the next chapter/page request to the chat draft, preserving existing text and leaving sending to the learner.
 - `engine/src/tutor_engine/` holds all state and decisions:
   - `service.py` has one method per tool. Each method is one `Store.transaction` (SQLite `BEGIN IMMEDIATE`, one JSON `Progress` row per `(learner, course)`).
   - `policy.next_step` is recomputed on every call, never stored. Order: open question > due review > first unmastered objective (`probe`/`teach` when new, `practice` or `assess` after) > deferred > `complete`.
@@ -56,10 +58,9 @@ The model decides **how** to teach. Deterministic code decides **what comes next
 
 ## Known gaps
 
-- Only typechecked and smoke-tested with a fake `ctx`. Not yet run inside a real DSH runtime.
 - When the plugin runs from outside the DSH checkout, it imports its own `node_modules` copies of `@deepseek-ai/*`. If DSH rejects foreign instances, resolve them from the host instead.
 - `tutor_grade` and `tutor_assess` trust the model to pass the learner's actual words. DeepTutor commits answers server-side at turn start. Closing this needs reading the current user message from the DSH session.
-- The question is shown by the model in text. A dedicated answer card plus `exec.concludeTurn()` is the upgrade path.
+- Answers are entered in chat. Dedicated answer controls plus `exec.concludeTurn()` are the upgrade path.
 - Code grading is exact after normalization (HTML/LaTeX delimiters, case, punctuation). An answer with equivalent but different wording fails, which is why free-text blanks are routed to `open`.
 - Verdicts on `open` questions are the model's judgement, not checked by code.
 - About 1,800 parser leaves have no answer key and are not in the bank. Only ~400 items carry a `knowledge` tag, so linking relies on text search.
