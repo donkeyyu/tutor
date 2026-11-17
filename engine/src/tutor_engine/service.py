@@ -9,6 +9,7 @@ import time
 from typing import Any
 
 from tutor_engine import bank as bank_mod
+from tutor_engine import paper as paper_mod
 from tutor_engine import policy, scheduler, teaching
 from tutor_engine.grading import grade as grade_answer
 from tutor_engine.models import (
@@ -94,8 +95,18 @@ class Tutor:
         types: list[str] | None = None,
         difficulty: int | None = None,
         limit: int = 20,
+        detail: bool = False,
     ) -> dict[str, Any]:
-        return bank_mod.search(self._bank(), query, subject, types or (), difficulty, limit)
+        return bank_mod.search(self._bank(), query, subject, types or (), difficulty, limit, detail)
+
+    def paper(
+        self, title: str, scope: str, knowledge_points: list[dict[str, Any]],
+        subject: str = "", grade: str = "", count: int = 10,
+        duration_minutes: int | None = None,
+    ) -> dict[str, Any]:
+        return paper_mod.assemble(
+            self._bank(), title, scope, knowledge_points, subject, grade, count, duration_minutes
+        )
 
     def textbook(
         self, action: str = "list", query: str = "", ref: str = "", page: int | None = None,

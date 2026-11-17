@@ -6,6 +6,7 @@
       name: '/Users/chengqiyu/dev/tutor/plugin/src/index.ts'
       config:
         learner: default
+        # Defaults to the bundled textbook sample in data/textbooks.
         # vault: /Users/chengqiyu/dev/textbook-study-vault
         # indexFolder: 教材索引
         course: default

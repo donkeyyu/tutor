@@ -1,15 +1,17 @@
 // DSH plugin: mounts the tutor tools and protocol. All state and decisions live
 // in the Python engine (../engine); these tools are thin JSON pass-throughs.
-import { readFileSync } from 'node:fs'
+import { randomUUID } from 'node:crypto'
+import { mkdirSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-system-prompt'
 import { defineTool, type ToolResult } from '@deepseek-ai/dsh-tools'
 import Schema from '@deepseek-ai/schemastery'
-import { type Card, type PageImage, gradeCard, knowledgeCard, presentCard, questionCard } from './cards.ts'
-import { callEngine, type EngineOptions } from './engine.ts'
+import { type Card, gradeCard, knowledgeCard, presentCard, questionCard } from './cards.ts'
+import { callEngine, type EngineOptions, type Json } from './engine.ts'
 import { TUTOR_PROTOCOL } from './prompt.ts'
+import { type Paper, paperCard, renderPaperHtml } from './paper.ts'
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..')
 
@@ -35,7 +37,7 @@ export const Config: Schema<Config> = Schema.object({
   db: Schema.string().default(resolve(ROOT, 'data/tutor.db')),
   bank: Schema.string().default(resolve(ROOT, 'data/bank.jsonl')),
   sources: Schema.string().default(resolve(ROOT, 'data/sources')),
-  vault: Schema.string().default(resolve(ROOT, '../textbook-study-vault')).description('教材学习 (textbook-study) Obsidian vault. Leave empty to turn tutor_textbook off.'),
+  vault: Schema.string().default(resolve(ROOT, 'data/textbooks')).description('Textbook vault (bundled demo by default). Set a 教材学习 vault path to use your own books, or leave empty to turn tutor_textbook off.'),
   indexFolder: Schema.string().default('教材索引').description('章节索引文件夹: vault-relative chapter index folder, same as the 教材学习 setting.'),
   pdftotext: Schema.string().default('pdftotext').description('pdftotext executable (poppler) used to read textbook PDF text.'),
   learner: Schema.string().default('default'),
@@ -50,18 +52,7 @@ const carded = (card: (args: any, value: any) => Card | null) => ({
   presentResult: (_args: unknown, result: ToolResult) => presentCard(result),
 })
 
-/** Page images the engine rendered, inlined for the card. Unreadable files are left out. */
-function pageImages(value: any): PageImage[] {
-  return (Array.isArray(value?.images) ? value.images : []).flatMap((img: any) => {
-    try {
-      return [{ page: img.page, src: `data:image/jpeg;base64,${readFileSync(img.path).toString('base64')}` }]
-    } catch {
-      return []
-    }
-  })
-}
-
-/** Textbook reads: the model gets the JSON without image paths; the card gets the images. */
+/** Textbook reads stay in the tool record unless the tutor explicitly shows a card. */
 const textbookOutput = {
   output: {
     schema: json.schema,
@@ -70,9 +61,11 @@ const textbookOutput = {
       const { images: _images, ...rest } = value as Record<string, unknown>
       return json.render(args, rest)
     },
-    presentationMeta: (args: any, value: any) => (args.action === 'read' ? knowledgeCard(value, pageImages(value)) : null) as any,
+    presentationMeta: (args: any, value: any) => (args.action === 'read'
+      ? { ...knowledgeCard(value), show_card: args.show_card === true } : null) as any,
   },
-  presentResult: (_args: unknown, result: ToolResult) => presentCard(result),
+  presentResult: (_args: unknown, result: ToolResult) =>
+    (result.meta as { show_card?: boolean } | undefined)?.show_card === true ? presentCard(result) : undefined,
 }
 
 const kpId = { type: 'string', description: 'knowledge_point_id from tutor_status, verbatim.' } as const
@@ -101,9 +94,61 @@ export function apply(ctx: Context, config: Config) {
       types: { type: 'array', items: { type: 'string', enum: ['single', 'multi', 'judge', 'blank', 'open'] } },
       difficulty: { type: 'integer', enum: [1, 2, 3], description: '1 基础, 2 中档, 3 较难' },
       limit: { type: 'integer', description: 'Max results, up to 50 (default 20).' },
+      detail: { type: 'boolean', description: 'Include full question material, prompt and options, without answers. Use true to inspect candidates before selecting a test paper.' },
     },
     output: json,
     execute: (args, exec) => call('bank_search', args, exec.signal),
+  }))
+
+  ctx.tools.register(defineTool({
+    name: 'tutor_paper',
+    description: '组卷: assemble a standalone test paper from real bank questions you have inspected. First split the requested chapter/topic into knowledge points and search with tutor_bank_search detail=true; select only questions that match the grade, topic and requested types. Returns knowledge coverage, question-type/difficulty breakdown and shortages, with a click-to-open HTML paper. Does not change the course, pending quiz or mastery. Never invent question ids or fill shortages with unrelated questions.',
+    parameters: {
+      title: { type: 'string', required: true, description: 'Chinese paper title.' },
+      scope: { type: 'string', required: true, description: 'The chapter or knowledge scope requested by the learner.' },
+      subject: { type: 'string', description: 'Bank subject code, e.g. math. Every selected question must match.' },
+      grade: { type: 'string', description: 'Grade explicitly given by the learner, if any.' },
+      count: { type: 'integer', description: 'Requested total questions, 1–50 (default 10). Keep this target when the bank is short.' },
+      duration_minutes: { type: 'integer', description: 'Time limit only if requested, 1–360 minutes.' },
+      knowledge_points: {
+        type: 'array', required: true,
+        items: {
+          type: 'object', additionalProperties: false,
+          properties: {
+            name: { type: 'string', required: true, description: 'A distinct knowledge point in the requested scope.' },
+            objective: { type: 'string', required: true, description: 'The specific ability this point tests.' },
+            question_ids: { type: 'array', required: true, items: { type: 'string' }, description: 'Inspected bank ids for this point. An empty list reports a coverage gap. Each id may occur only once in the whole paper.' },
+          },
+        },
+      },
+    },
+    output: {
+      schema: json.schema,
+      render: (_args: unknown, value: any) => json.render(_args, {
+        ...value,
+        questions: value.questions.map(({ number, knowledge_point, question_id, question_type, difficulty }: any) =>
+          ({ number, knowledge_point, question_id, question_type, difficulty })),
+      }),
+      presentationMeta: (_args: unknown, value: any) => paperCard(value, value.html_path) as any,
+    },
+    presentResult: (_args: unknown, result: ToolResult) => presentCard(result),
+    execute: async (args, exec) => {
+      const paper = await call('paper', args, exec.signal) as unknown as Paper
+      if (paper.count === 0) return paper as unknown as Json
+      const rendered = await renderPaperHtml(paper, exec.signal)
+      exec.signal.throwIfAborted()
+      const directory = resolve(dirname(opts.db), 'papers')
+      mkdirSync(directory, { recursive: true })
+      const path = resolve(directory, `paper-${randomUUID()}.html`)
+      const temporary = `${path}.tmp`
+      try {
+        writeFileSync(temporary, rendered.html, { encoding: 'utf8', flag: 'wx' })
+        renameSync(temporary, path)
+      } finally {
+        rmSync(temporary, { force: true })
+      }
+      return { ...paper, warnings: [...paper.warnings, ...rendered.warnings], html_path: path } as unknown as Json
+    },
   }))
 
   ctx.tools.register(defineTool({
@@ -115,9 +160,10 @@ export function apply(ctx: Context, config: Config) {
       ref: { type: 'string', description: 'read: chapter ref from list or search, verbatim.' },
       page: { type: 'integer', description: 'read: physical PDF page to start from (default: chapter start).' },
       limit: { type: 'integer', description: 'search: max hits, up to 30 (default 10).' },
+      show_card: { type: 'boolean', description: 'read: show a knowledge card only when the learner asks to see the material or the card clearly helps the current explanation. Omit or false for routine teaching and background reading (default: hidden).' },
     },
     ...textbookOutput,
-    execute: (args, exec) => call('textbook', args, exec.signal),
+    execute: ({ show_card: _showCard, ...args }, exec) => call('textbook', args, exec.signal),
   }))
 
   ctx.tools.register(defineTool({
@@ -159,10 +205,14 @@ export function apply(ctx: Context, config: Config) {
 
   ctx.tools.register(defineTool({
     name: 'tutor_quiz',
-    description: 'Pose the next bank question for an objective (defaults to the current one). The answer key stays in the engine. If a question is already open it is returned unchanged. Show it verbatim, then wait.',
+    description: 'Pose the next bank question for an objective (defaults to the current one). The answer key stays in the engine. If a question is already open it is returned unchanged. Success displays the question card and ends this turn. Do not repeat the material, prompt or options in text; wait for the learner.',
     parameters: { knowledge_point_id: kpId },
     ...carded((_args, value) => questionCard(value)),
-    execute: (args, exec) => call('quiz', { knowledge_point_id: args.knowledge_point_id ?? '' }, exec.signal),
+    execute: async (args, exec) => {
+      const result = await call('quiz', { knowledge_point_id: args.knowledge_point_id ?? '' }, exec.signal)
+      exec.concludeTurn()
+      return result
+    },
   }))
 
   ctx.tools.register(defineTool({

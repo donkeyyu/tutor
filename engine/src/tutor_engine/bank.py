@@ -69,6 +69,18 @@ class Question:
             "text": text[:120],
         }
 
+    def public(self) -> dict[str, Any]:
+        """Complete question for inspection or a paper, without its answer key."""
+        return {
+            "question_id": self.id,
+            "question_type": self.type,
+            "material": self.material,
+            "prompt": self.content,
+            "options": dict(zip(self.labels, self.options)),
+            "blanks": len(self.answer) if self.type == "blank" else 0,
+            "difficulty": self.difficulty,
+        }
+
 
 def _parse(raw: dict[str, Any], line_no: int) -> Question:
     try:
@@ -142,6 +154,7 @@ def search(
     types: Collection[str] = (),
     difficulty: int | None = None,
     limit: int = 20,
+    detail: bool = False,
 ) -> dict[str, Any]:
     """Find questions to link to an objective. ``query`` words must all appear."""
     words = [w.casefold() for w in query.split()]
@@ -163,7 +176,10 @@ def search(
                 continue
         hits.append(q)
     limit = max(1, min(limit, 50))
-    return {"total": len(hits), "questions": [q.summary() for q in hits[:limit]]}
+    return {
+        "total": len(hits),
+        "questions": [q.summary() | (q.public() if detail else {}) for q in hits[:limit]],
+    }
 
 
 def poseable(bank: dict[str, Question], ids: Collection[str], qualitative: bool) -> list[Question]:

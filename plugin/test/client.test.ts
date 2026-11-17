@@ -35,14 +35,16 @@ function loadClient() {
   })
   const views = new Map<string, any>()
   const nodes = new Map<string, any>()
+  const frames = new Map<string, any>()
   const definitions: any[] = []
   plugin.apply({ slots: {
     inject: (name: string, register: () => unknown) => {
-      assert.ok(['tool.call.toolview', 'conversation.chat.node'].includes(name))
+      assert.ok(['tool.call.toolview', 'conversation.chat.node', 'conversation.hero.frame'].includes(name))
       return register()
     },
-    register: ({ name, key }: any, view: any) => {
-      const registry = name === 'tool.call.toolview' ? views : nodes
+    register: ({ name, key, id }: any, view: any) => {
+      const registry = name === 'tool.call.toolview' ? views : name === 'conversation.hero.frame' ? frames : nodes
+      key ??= id
       registry.set(key, (props: any) => {
         const stateKey = `${name}/${props.node?.id ?? props.block?.callId ?? key}`
         activeState = states.get(stateKey) ?? []
@@ -54,12 +56,31 @@ function loadClient() {
   }, uiConversation: { events: { register: (definition: any) => definitions.push(definition) } } })
   const renderCard = (props: any) => props.toolName === 'tutor_grade' ? views.get(props.toolName)(props)
     : nodes.get('tutor-card')({ ...props, node: { id: props.block.callId, data: { toolName: props.toolName, block: props.block } } })
-  return { views, nodes, definitions, MarkdownText, renderCard }
+  return { views, nodes, frames, definitions, MarkdownText, renderCard }
 }
+
+test('welcome appears on each demo visit and dismisses without replacing the conversation', () => {
+  for (const hero of [true, false]) {
+    const { frames } = loadClient()
+    const frame = frames.get('tutor-welcome')
+    const children = { type: 'composer and conversation', children: [] }
+    const render = () => frame({ hero, children })
+    const welcome = () => elements(render()).find(node => node.props?.['data-tutor-welcome'])
+    assert.ok(welcome())
+    assert.equal(welcome().props.lang, 'zh-CN')
+    assert.ok(elements(render()).includes(children))
+    const dismiss = elements(welcome()).find(node => node.type === 'button')
+    dismiss.props.onClick()
+    assert.equal(welcome(), undefined)
+    assert.ok(elements(render()).includes(children))
+    const nextVisit = loadClient().frames.get('tutor-welcome')({ hero, children })
+    assert.ok(elements(nextVisit).some(node => node.props?.['data-tutor-welcome']))
+  }
+})
 
 test('conversation cards render persisted Markdown instead of the raw JSON', () => {
   const { views, MarkdownText, renderCard } = loadClient()
-  assert.deepEqual([...views.keys()].sort(), ['tutor_grade', 'tutor_quiz', 'tutor_textbook'])
+  assert.deepEqual([...views.keys()].sort(), ['tutor_grade', 'tutor_paper', 'tutor_quiz', 'tutor_textbook'])
   const cards = {
     tutor_quiz: questionCard({ question: {
       question_type: 'single', difficulty: 1, prompt: '<p>求 \\(x+1\\)</p>', options: { A: '2', B: '3' },
@@ -122,6 +143,7 @@ function knowledgeProps(nextPage: number | null = 131, draft = '') {
       submit: () => assert.fail('continuation must not send without the learner'),
     },
     block: { callId: 'read-legacy', kind: 'tool-result', isError: false,
+      meta: { ...knowledgeCard(value), show_card: true },
       content: [{ type: 'text', text: JSON.stringify(value) }] },
   }
   return { value, props, input }
@@ -136,6 +158,40 @@ function callEvents(props: any) {
     } },
   ]
 }
+
+test('paper blueprint stays in chat and opens the native sidebar only after a click, including replay', () => {
+  const { definitions, nodes, MarkdownText } = loadClient()
+  const definition = definitions.find(definition => definition.kind === 'tutor-card')
+  const props = {
+    toolName: 'tutor_paper', phase: 'result', t: (key: string) => key,
+    block: { callId: 'paper-1', kind: 'tool-result', isError: false,
+      meta: { title: '组卷 · 一次函数', body: '知识点拆解及逐题细目', html_path: '/demo/data/papers/paper-1.html' },
+      content: [{ type: 'text', text: '{}' }] },
+  }
+  const opened: string[] = []
+  const events = callEvents(props)
+  for (const replay of [false, true]) {
+    const [node] = project(definition, events)
+    const row = nodes.get('tutor-card')({ ...props, node, openFile: (path: string) => opened.push(path) })
+    assert.equal(opened.length, replay ? 2 : 0, 'rendering/replaying the card must not open the sidebar')
+    const details = elements(row).find(element => element.type === MarkdownText)
+    assert.equal(details.props.text, props.block.meta.body)
+    const links = elements(row).filter(element => element.props?.['data-tutor-paper-open'])
+    assert.equal(links.length, 2)
+    assert.ok(row.children.indexOf(links[0]) < row.children.indexOf(details))
+    assert.ok(row.children.lastIndexOf(links[1]) > row.children.indexOf(details))
+    for (const link of links) {
+      assert.equal(link.props.style.color, 'color-mix(in srgb, var(--dsw-alias-link) 90%, var(--dsw-alias-label-primary))')
+      assert.equal(link.props.style.textDecoration, 'underline')
+      link.props.onClick()
+      assert.equal(opened.at(-1), props.block.meta.html_path)
+    }
+  }
+  const noPaper = { ...props, block: { ...props.block, meta: { title: '组卷 · 缺题', body: '暂无匹配题目' } } }
+  const [node] = project(definition, callEvents(noPaper))
+  const empty = nodes.get('tutor-card')({ ...noPaper, node, openFile: () => assert.fail('no HTML was generated') })
+  assert.ok(!elements(empty).some(element => element.props?.['data-tutor-paper-open']))
+})
 
 function project(definition: any, events: any[]) {
   assert.ok(definition, 'the tutor must register a conversation card definition')
@@ -190,6 +246,25 @@ test('question and knowledge cards stay outside the thinking group on live resul
   }
 })
 
+test('textbook reads stay hidden unless explicitly shown, including legacy replay and nested calls', () => {
+  const { definitions, views } = loadClient()
+  const definition = definitions.find(definition => definition.kind === 'tutor-card')
+  const { props } = knowledgeProps()
+  for (const meta of [undefined, { title: 'Old knowledge card', body: 'Full chapter text' },
+    { ...props.block.meta, show_card: false }, { ...props.block.meta, show_card: 'true' }]) {
+    const hidden = { ...props, block: { ...props.block, meta } }
+    const events = callEvents(hidden)
+    assert.equal(project(definition, events).length, 0)
+    assert.equal(project(definition, events).length, 0, 'replay stays hidden')
+    assert.equal(project(definition, [{ type: 'tool/ptc-dispatch', seq: 20, time: 200, data: {
+      subCallId: 'nested-read', name: props.toolName, arguments: { action: 'read' },
+      content: props.block.content, meta, isError: false,
+    } }]).length, 0)
+    const toolRow = views.get(props.toolName)(hidden)
+    assert.ok(!elements(toolRow).some(element => element.props?.['data-tutor-card'] || element.type === 'pre'))
+  }
+})
+
 test('loading, failed tools, textbook searches and unrelated tools do not create conversation cards', () => {
   const { definitions } = loadClient()
   const definition = definitions.find(definition => definition.kind === 'tutor-card')
@@ -199,6 +274,7 @@ test('loading, failed tools, textbook searches and unrelated tools do not create
   assert.equal(project(definition, callEvents(props)).length, 0)
   for (const value of [{ textbooks: [] }, { hits: [] }, { title: 'broken read', shown: [1, 2] }]) {
     const { props } = knowledgeProps()
+    delete (props.block as any).meta
     props.block.content[0].text = JSON.stringify(value)
     assert.equal(project(definition, callEvents(props)).length, 0)
   }
@@ -217,7 +293,7 @@ test('nested tutor calls publish their own cards without exposing unrelated subc
   const { props } = knowledgeProps()
   const nested = { type: 'tool/ptc-dispatch', seq: 20, time: 200, data: {
     subCallId: 'nested-read', parentCallId: 'code', rootCallId: 'code', name: props.toolName,
-    arguments: { action: 'read' }, content: props.block.content, isError: false,
+    arguments: { action: 'read', show_card: true }, content: props.block.content, meta: props.block.meta, isError: false,
   } }
   const [node] = project(definition, [nested])
   assert.equal(node.groupTree, 'turn')
@@ -229,6 +305,7 @@ test('nested tutor calls publish their own cards without exposing unrelated subc
 test('older textbook reads render every page and note as a knowledge card without saved metadata', () => {
   const { renderCard, MarkdownText } = loadClient()
   const { value, props } = knowledgeProps()
+  delete (props.block as any).meta
   const row = renderCard(props)
   const expected = knowledgeCard(value)
   assert.equal(row.children[0].children[0], expected.title)
@@ -265,6 +342,7 @@ test('textbook lists, search results, malformed reads and errors keep their raw 
   const { views } = loadClient()
   for (const value of [{ textbooks: [] }, { hits: [] }, { ref: 'book/chapter', title: 'incomplete', shown: [1, 2] }]) {
     const { props } = knowledgeProps()
+    delete (props.block as any).meta
     props.block.content[0].text = JSON.stringify(value)
     const row = views.get('tutor_textbook')(props)
     assert.equal(row.children[1].type, 'pre')
@@ -334,15 +412,14 @@ test('web cards keep loading, errors and results without card metadata visible',
   assert.ok(!JSON.stringify(row).includes('must not appear'))
 })
 
-test('textbook cards show rendered page images above the remaining text and notes', () => {
+test('textbook cards show page text and notes without inlining PDF page images', () => {
   const { renderCard, MarkdownText } = loadClient()
   const { value, props } = knowledgeProps()
-  const src = 'data:image/jpeg;base64,AAAA'
-  const meta = knowledgeCard(value, [{ page: 127, src }, { page: 128, src: 'javascript:alert(1)' }])
+  const meta = knowledgeCard(value)
+  assert.ok(!('images' in meta))
   const row = renderCard({ ...props, block: { ...props.block, meta } })
-  // Only inline JPEG data reaches an <img>.
-  assert.deepEqual(elements(row).filter(node => node.type === 'img').map(node => node.props.src), [src])
+  assert.deepEqual(elements(row).filter(node => node.type === 'img'), [])
   const markdown = elements(row).find(node => node.type === MarkdownText)
-  assert.ok(!markdown.props.text.includes('第 127 页原文') && markdown.props.text.includes('第 129 页原文'))
+  assert.ok(markdown.props.text.includes('第 127 页原文') && markdown.props.text.includes('第 130 页原文'))
   assert.ok(markdown.props.text.includes('去分母'))
 })

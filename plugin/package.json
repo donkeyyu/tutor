@@ -37,6 +37,11 @@
     "@deepseek-ai/dsh-tools": "0.2.2-rc.3",
     "@deepseek-ai/schemastery": "3.19.0",
     "@types/node": "^24.0.0",
+    "@types/sanitize-html": "2.16.2",
     "typescript": "^5.9.0"
+  },
+  "dependencies": {
+    "katex": "0.19.1",
+    "sanitize-html": "2.18.2"
   }
 }

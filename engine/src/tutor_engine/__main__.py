@@ -19,7 +19,7 @@ from tutor_engine.service import Tutor
 from tutor_engine.store import Store
 from tutor_engine.textbook import Library
 
-COMMANDS = ("status", "bank_search", "build", "quiz", "grade", "assess", "skip", "defer", "profile", "note", "textbook")
+COMMANDS = ("status", "bank_search", "build", "quiz", "grade", "assess", "skip", "defer", "profile", "note", "textbook", "paper")
 
 
 def main(argv: list[str] | None = None) -> int:

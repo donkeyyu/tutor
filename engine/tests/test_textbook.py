@@ -13,6 +13,29 @@ from tutor_engine.store import Store
 from tutor_engine.textbook import Library
 
 
+def test_bundled_textbook_pdf_and_notes_match_the_index(tmp_path: Path):
+    vault = Path(__file__).resolve().parents[2] / "data" / "textbooks"
+    books = Library(vault, "教材索引", tmp_path / "cache").books()
+    assert len(books) == 1
+    book = next(iter(books.values()))
+    assert hashlib.sha256(book.pdf.read_bytes()).hexdigest() == book.sha256
+    assert (vault / "教材索引" / f"{book.sha256}.json").is_file()
+    chapter_ids = {c.id for c in book.chapters}
+    for chapter in book.chapters:
+        assert 1 <= chapter.first <= chapter.last <= book.page_count
+        assert not chapter.parent or chapter.parent in chapter_ids
+    assert book.notes
+    for note in book.notes:
+        assert 1 <= note.page <= book.page_count
+        assert note.chapter_id in chapter_ids
+        assert not note.section_id or note.section_id in chapter_ids
+        assert note.text and "[[" not in note.text
+    zero = next(n for n in book.notes if n.title == "0 既不是正数，也不是负数")
+    assert zero.page == 2 and zero.section_id == "1.1"
+    opposites = next(n for n in book.notes if n.title == "相反数说的是两个数的关系")
+    assert opposites.page == 12 and opposites.section_id == "1.2"
+
+
 @pytest.fixture
 def library(tmp_path: Path) -> Library:
     vault = tmp_path / "vault"

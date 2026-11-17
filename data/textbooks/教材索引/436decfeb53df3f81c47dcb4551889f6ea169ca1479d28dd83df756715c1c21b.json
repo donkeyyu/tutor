@@ -1,0 +1,57 @@
+{
+  "version": 1,
+  "textbook_id": "book_6f2a471b07f44a4985756aff",
+  "pdf_sha256": "436decfeb53df3f81c47dcb4551889f6ea169ca1479d28dd83df756715c1c21b",
+  "pdf_path": "数学七上-第一章.pdf",
+  "page_count": 23,
+  "chapters": [
+    {
+      "id": "chapter-1",
+      "title": "第一章 有理数",
+      "source_title": "第一章 有理数",
+      "level": 1,
+      "parent_id": null,
+      "source": "manual",
+      "start": {
+        "page": 1,
+        "y": 0
+      },
+      "end": {
+        "page": 23,
+        "y": 1
+      }
+    },
+    {
+      "id": "1.1",
+      "title": "1.1 正数和负数",
+      "source_title": "1.1 正数和负数",
+      "level": 2,
+      "parent_id": "chapter-1",
+      "source": "manual",
+      "start": {
+        "page": 2,
+        "y": 0
+      },
+      "end": {
+        "page": 6,
+        "y": 1
+      }
+    },
+    {
+      "id": "1.2",
+      "title": "1.2 有理数及其大小比较",
+      "source_title": "1.2 有理数及其大小比较",
+      "level": 2,
+      "parent_id": "chapter-1",
+      "source": "manual",
+      "start": {
+        "page": 7,
+        "y": 0
+      },
+      "end": {
+        "page": 19,
+        "y": 1
+      }
+    }
+  ]
+}
