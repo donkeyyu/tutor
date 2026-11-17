@@ -6,6 +6,25 @@ import { join } from 'node:path'
 import { test } from 'node:test'
 import { htmlToMarkdown, knowledgeCard } from '../src/cards.ts'
 import { apply, Config } from '../src/index.ts'
+import { callEngine } from '../src/engine.ts'
+
+test('engine bridge keeps Chinese JSON intact with a non-UTF-8 parent encoding', async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'tutor-'))
+  const bank = join(dir, 'bank.jsonl')
+  writeFileSync(bank, JSON.stringify({ id: 'q1', type: 'blank', content: '相反数是什么？', answer: ['-1'] }))
+  const previous = process.env.PYTHONIOENCODING
+  process.env.PYTHONIOENCODING = 'ascii'
+  t.after(() => {
+    if (previous === undefined) delete process.env.PYTHONIOENCODING
+    else process.env.PYTHONIOENCODING = previous
+  })
+  const result: any = await callEngine(
+    Config({ db: join(dir, 't.db'), bank, vault: '' } as Partial<Config> as Config),
+    'bank_search', { query: '相反数' },
+  )
+  assert.equal(result.total, 1)
+  assert.equal(result.questions[0].text, '相反数是什么？')
+})
 
 test('tools reach the engine and keep the answer key server-side', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'tutor-'))

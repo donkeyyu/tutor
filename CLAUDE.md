@@ -20,7 +20,7 @@ cd plugin && npm install && npx tsc --noEmit && npm test
 npx @deepseek-ai/dsh@0.2.2-rc.3 web --patch /Users/chengqiyu/dev/tutor/plugin/cordis.yml
 # or from a deepseek-harness source checkout: pnpm dsh web --patch ...
 
-# Rebuild data/bank.jsonl (generated, gitignored) from the parser outputs; prints kept/skipped counts
+# Refresh raw data/bank.jsonl from parser outputs; repackage local images before sharing (see data/README.md)
 PYTHONPATH=engine/src python3 -m tutor_engine.import_jby ~/dev/jby_work/question_bank/word_parse/outputs data/bank.jsonl
 
 # Call the engine by hand
@@ -58,6 +58,7 @@ The model decides **how** to teach. Deterministic code decides **what comes next
   - Leaves with empty keys are skipped and counted, never guessed.
   - Free-text `填空` keys (over 12 chars, `或`, `合理`) become `open`.
   - Ids are content hashes taken before the free-text rule, so re-imports keep outline links unless the question changed.
+  - `data/bank.jsonl` is a checked-in demo snapshot. Local images are inlined; remote image links need internet. See `data/README.md` for provenance and refresh limits.
 
 ## Known gaps
 

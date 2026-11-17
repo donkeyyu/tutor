@@ -45,7 +45,7 @@ export function callEngine(
   ]
   return new Promise((resolve, reject) => {
     const child = spawn(opts.python, args, {
-      env: { ...process.env, PYTHONPATH: join(opts.engineDir, 'src') },
+      env: { ...process.env, PYTHONIOENCODING: 'utf-8', PYTHONPATH: join(opts.engineDir, 'src') },
       signal,
     })
     let stdout = ''
