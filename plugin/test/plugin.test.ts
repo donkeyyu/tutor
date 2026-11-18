@@ -72,6 +72,54 @@ test('successful quiz cards conclude the turn without suppressing refusals or ch
   assert.equal(conclusions, 2, 'showing an already-open question must also end the turn')
 })
 
+test('teach-first quiz publishes the example before the exercise and only concludes on success', async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'tutor-teach-'))
+  t.after(() => rmSync(dir, { recursive: true, force: true }))
+  const bank = join(dir, 'bank.jsonl')
+  writeFileSync(bank, JSON.stringify({ id: 'q1', type: 'single', content: '2 的相反数是？', options: ['-2', '2'], answer: 'A' }))
+  const tools = new Map<string, any>()
+  apply({ tools: { register: (def: any) => tools.set(def.name, def) }, systemPrompt: { section() {} } } as any,
+    Config({ db: join(dir, 't.db'), bank, vault: '' } as Partial<Config> as Config))
+  let conclusions = 0
+  const exec = { signal: new AbortController().signal, concludeTurn: () => { conclusions++ } }
+  const run = (name: string, args: any = {}) => tools.get(name).execute(args, exec)
+  await run('tutor_profile', { fields: { prior_knowledge: '七年级', target_level: '有理数', preferences: '先举个例子，再带我做一道练习', teaching_strategy: 'teach_first' } })
+  await run('tutor_build', { modules: [{ name: '有理数', knowledge_points: [{ id: 'opposites', name: '相反数', type: 'memory', question_ids: ['q1'] }] }] })
+  await assert.rejects(run('tutor_quiz'), { code: 'TUTOR_REFUSED', message: /introduction/ })
+  assert.equal(conclusions, 0)
+  const introduction = '例如，3 的相反数是 −3，因为它们只有符号不同。'
+  const args = { introduction }
+  const quiz = await run('tutor_quiz', args)
+  assert.equal(quiz.introduction, introduction)
+  const meta = tools.get('tutor_quiz').output.presentationMeta(args, quiz)
+  assert.ok(meta.body.startsWith(`${introduction}\n\n---\n\n`))
+  assert.ok(meta.body.indexOf(introduction) < meta.body.indexOf('2 的相反数是？'))
+  assert.equal(conclusions, 1)
+  await assert.rejects(run('tutor_quiz'), { code: 'TUTOR_REFUSED', message: /introduction/ })
+  assert.equal(conclusions, 1)
+  assert.deepEqual((await run('tutor_quiz', args)).question, quiz.question)
+  assert.equal(conclusions, 2)
+})
+
+test('demo config reaches the engine and reuses a bank question after a correct answer', async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'tutor-demo-'))
+  t.after(() => rmSync(dir, { recursive: true, force: true }))
+  const bank = join(dir, 'bank.jsonl')
+  writeFileSync(bank, JSON.stringify({ id: 'q1', type: 'single', content: '2 的相反数是？', options: ['-2', '2'], answer: 'A' }))
+  const tools = new Map<string, any>()
+  const sections: any[] = []
+  apply({ tools: { register: (def: any) => tools.set(def.name, def) }, systemPrompt: { section: (s: any) => sections.push(s) } } as any,
+    Config({ db: join(dir, 't.db'), bank, vault: '', demo: true } as Partial<Config> as Config))
+  const exec = { signal: new AbortController().signal, concludeTurn() {} }
+  const run = (name: string, args: any = {}) => tools.get(name).execute(args, exec)
+  assert.ok(sections[0].text.includes('Demo mode'))
+  assert.equal((await run('tutor_status')).demo_mode, true)
+  await run('tutor_build', { modules: [{ name: '有理数', knowledge_points: [{ id: 'opposites', name: '相反数', type: 'memory', question_ids: ['q1'] }] }] })
+  const posed = await run('tutor_quiz')
+  await run('tutor_grade', { answer: 'A' })
+  assert.deepEqual((await run('tutor_quiz')).question, posed.question)
+})
+
 test('paper tool writes a self-contained HTML file and keeps the pending lesson unchanged', async (t) => {
   const dir = mkdtempSync(join(tmpdir(), 'tutor-paper-'))
   t.after(() => rmSync(dir, { recursive: true, force: true }))

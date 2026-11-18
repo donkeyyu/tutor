@@ -48,7 +48,8 @@ export function questionCard(value: Obj): Card {
   if (options.length) parts.push(options.join('\n\n'))
   if (q.blanks > 1) parts.push(`_共 ${q.blanks} 空，按顺序作答_`)
   const tags = [label, DIFFICULTY[q.difficulty], value.reposed && '未作答'].filter(Boolean)
-  return { title: `题目 · ${tags.join(' · ')}`, body: parts.filter(Boolean).join('\n\n') }
+  const exercise = parts.filter(Boolean).join('\n\n')
+  return { title: `题目 · ${tags.join(' · ')}`, body: value.introduction ? `${value.introduction}\n\n---\n\n${exercise}` : exercise }
 }
 
 /** tutor_grade: the verdict, the key and the explanation. */

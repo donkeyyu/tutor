@@ -67,8 +67,14 @@ def _step(progress: Progress, kp: KnowledgePoint, action: str, reason: str) -> d
     }
 
 
-def next_step(progress: Progress, now: float) -> dict[str, Any]:
+def next_step(progress: Progress, now: float, demo: bool = False) -> dict[str, Any]:
     """Precedence: open question > due review > first unmastered objective > complete."""
+    if demo:
+        return {
+            "action": "demo",
+            "reason": "Follow the current request. Reuse matching material; after grading, give brief feedback and wait unless another step was requested.",
+            **({"pending_question": progress.pending.public()} if progress.pending else {}),
+        }
     if not progress.modules:
         return {"action": "outline", "reason": "No outline yet; agree one with tutor_build."}
 

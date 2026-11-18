@@ -78,6 +78,21 @@ test('welcome appears on each demo visit and dismisses without replacing the con
   }
 })
 
+test('quiz replay keeps the worked example visible before the question and answer choices', () => {
+  const { MarkdownText, renderCard } = loadClient()
+  const introduction = '例如，3 的相反数是 −3，因为它们只有符号不同。'
+  const value = { introduction, question: {
+    question_id: 'opposites', question_type: 'single', difficulty: 1,
+    prompt: '<p>2 的相反数是？</p>', options: { A: '-2', B: '2' },
+  } }
+  const row = renderCard({ toolName: 'tutor_quiz', phase: 'result', t: (key: string) => key,
+    block: { callId: 'with-example', isError: false, meta: questionCard(value),
+      content: [{ type: 'text', text: JSON.stringify(value) }] } })
+  const text = elements(row).filter(node => node.type === MarkdownText).map(node => node.props.text)
+  assert.equal(text[0], `${introduction}\n\n---\n\n2 的相反数是？`)
+  assert.deepEqual(text.slice(1), ['-2', '2'])
+})
+
 test('conversation cards render persisted Markdown instead of the raw JSON', () => {
   const { views, MarkdownText, renderCard } = loadClient()
   assert.deepEqual([...views.keys()].sort(), ['tutor_grade', 'tutor_paper', 'tutor_quiz', 'tutor_textbook'])

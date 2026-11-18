@@ -10,7 +10,7 @@ import { defineTool, type ToolResult } from '@deepseek-ai/dsh-tools'
 import Schema from '@deepseek-ai/schemastery'
 import { type Card, gradeCard, knowledgeCard, presentCard, questionCard } from './cards.ts'
 import { callEngine, type EngineOptions, type Json } from './engine.ts'
-import { TUTOR_PROTOCOL } from './prompt.ts'
+import { DEMO_PROTOCOL, TUTOR_PROTOCOL } from './prompt.ts'
 import { type Paper, paperCard, renderPaperHtml } from './paper.ts'
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..')
@@ -29,6 +29,7 @@ export interface Config {
   pdftotext: string
   learner: string
   course: string
+  demo: boolean
 }
 
 export const Config: Schema<Config> = Schema.object({
@@ -42,6 +43,7 @@ export const Config: Schema<Config> = Schema.object({
   pdftotext: Schema.string().default('pdftotext').description('pdftotext executable (poppler) used to read textbook PDF text.'),
   learner: Schema.string().default('default'),
   course: Schema.string().default('default'),
+  demo: Schema.boolean().default(false).description('演示模式：允许重复使用已答题，并可切换未答练习；重复答对不增加掌握度。'),
 })
 
 const json = { schema: { type: 'json' }, render: (_: unknown, value: unknown) => [{ type: 'text' as const, text: JSON.stringify(value) }] } as const
@@ -75,7 +77,7 @@ export function apply(ctx: Context, config: Config) {
   const call = (command: string, params: Record<string, unknown>, signal: AbortSignal) =>
     callEngine(opts, command, params, signal)
 
-  ctx.systemPrompt.section({ name: 'tutor:protocol', order: 5000, text: TUTOR_PROTOCOL, interpolate: false })
+  ctx.systemPrompt.section({ name: 'tutor:protocol', order: 5000, text: TUTOR_PROTOCOL + (config.demo ? DEMO_PROTOCOL : ''), interpolate: false })
 
   ctx.tools.register(defineTool({
     name: 'tutor_status',
@@ -94,7 +96,7 @@ export function apply(ctx: Context, config: Config) {
       types: { type: 'array', items: { type: 'string', enum: ['single', 'multi', 'judge', 'blank', 'open'] } },
       difficulty: { type: 'integer', enum: [1, 2, 3], description: '1 基础, 2 中档, 3 较难' },
       limit: { type: 'integer', description: 'Max results, up to 50 (default 20).' },
-      detail: { type: 'boolean', description: 'Include full question material, prompt and options, without answers. Use true to inspect candidates before selecting a test paper.' },
+      detail: { type: 'boolean', description: 'Include full question material, prompt and options, without answers. Use true before linking questions to a lesson or selecting a test paper; check the actual skill and grade, not just keywords.' },
     },
     output: json,
     execute: (args, exec) => call('bank_search', args, exec.signal),
@@ -168,7 +170,7 @@ export function apply(ctx: Context, config: Config) {
 
   ctx.tools.register(defineTool({
     name: 'tutor_build',
-    description: 'Replace the course outline. Link each knowledge point to bank question ids found with tutor_bank_search, and to its textbook chapter ref from tutor_textbook. Keep existing ids to keep progress; mastered objectives cannot be dropped. Reports objectives with no poseable questions (memory/procedure need code-graded types).',
+    description: 'Replace the course outline. Link only questions inspected with tutor_bank_search detail=true that test the named skill at the learner\'s grade. Do not put a negative-number identification question under plotting on a number line. Link textbook chapter refs from tutor_textbook. Keep existing ids to keep progress; mastered objectives cannot be dropped. Reports objectives with no poseable questions (memory/procedure need code-graded types).',
     parameters: {
       modules: {
         type: 'array',
@@ -205,11 +207,14 @@ export function apply(ctx: Context, config: Config) {
 
   ctx.tools.register(defineTool({
     name: 'tutor_quiz',
-    description: 'Pose the next bank question for an objective (defaults to the current one). The answer key stays in the engine. If a question is already open it is returned unchanged. Success displays the question card and ends this turn. Do not repeat the material, prompt or options in text; wait for the learner.',
-    parameters: { knowledge_point_id: kpId },
+    description: 'Pose a bank question only when the learner wants practice. Put any explanation, worked example or feedback in introduction: it is displayed before the question. Required for teach_first, even for an open question. Normal mode refuses a different objective while a question is open; demo mode can switch it and reuse answered questions. Success displays the card and ends this turn; do not repeat the question or its options in text.',
+    parameters: {
+      knowledge_point_id: kpId,
+      introduction: { type: 'string', description: 'Learner-facing Markdown shown before the exercise. For teach_first, explain the idea and solve a separate example step by step. Use the requested topic and grade, cite textbook pages when available, and do not reveal the exercise answer. Include grading feedback here when continuing directly to another quiz.' },
+    },
     ...carded((_args, value) => questionCard(value)),
     execute: async (args, exec) => {
-      const result = await call('quiz', { knowledge_point_id: args.knowledge_point_id ?? '' }, exec.signal)
+      const result = await call('quiz', { knowledge_point_id: args.knowledge_point_id ?? '', introduction: args.introduction ?? '' }, exec.signal)
       exec.concludeTurn()
       return result
     },

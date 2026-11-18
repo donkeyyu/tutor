@@ -104,6 +104,69 @@ def test_step_order_teach_first_and_defer(make_tutor):
     assert tutor.status()["next"]["knowledge_point_id"] == "fact"  # deferred comes back last
 
 
+def test_teach_first_quiz_requires_visible_introduction_even_for_pending_question(make_tutor):
+    tutor = make_tutor([q("q1")])
+    tutor.build(outline(["q1"]))
+    tutor.profile({"teaching_strategy": "teach_first"})
+    before = tutor.status()
+    with pytest.raises(TutorError, match="introduction"):
+        tutor.quiz()
+    assert tutor.status() == before
+
+    introduction = "例如，气温零下 2 度记作 −2，负号表示低于零度。"
+    posed = tutor.quiz(introduction=introduction)
+    assert posed["introduction"] == introduction
+    assert "Paris" not in json.dumps(posed)
+    before = tutor.status()
+    with pytest.raises(TutorError, match="introduction"):
+        tutor.quiz(introduction="  ")
+    assert tutor.status() == before
+    reposed = tutor.quiz(introduction=introduction)
+    assert reposed["reposed"] is True
+    assert reposed["question"] == posed["question"]
+    assert tutor.status() == before
+
+
+def test_quiz_refuses_to_return_pending_question_for_different_requested_objective(make_tutor):
+    tutor = make_tutor([q("q1"), OPEN])
+    tutor.build(outline(["q1"], ["o1"]))
+    posed = tutor.quiz(knowledge_point_id="fact")
+    before = tutor.status()
+    with pytest.raises(TutorError, match="different objective"):
+        tutor.quiz(knowledge_point_id="idea")
+    assert tutor.status() == before
+    assert tutor.quiz()["question"] == posed["question"]
+
+
+def test_demo_reuses_answered_questions_without_inflating_mastery(make_tutor):
+    tutor = make_tutor([q("q1")])
+    tutor.demo = True
+    assert tutor.status()["next"]["action"] == "demo"
+    tutor.build(outline(["q1"]))
+    tutor.quiz()
+    assert tutor.status()["next"]["pending_question"]["question_id"] == "q1"
+    first = tutor.grade(blanks=["Paris"])
+    assert first["next"]["action"] == "demo"
+    for _ in range(3):
+        assert tutor.quiz()["question"]["question_id"] == "q1"
+        repeated = tutor.grade(blanks=["Paris"])
+        assert repeated["mastery"] == first["mastery"] == 0.5
+        assert repeated["mastered"] is False
+
+
+def test_demo_can_switch_an_unanswered_question_without_awarding_credit(make_tutor):
+    tutor = make_tutor([q("q1"), OPEN])
+    tutor.demo = True
+    tutor.build(outline(["q1"], ["o1"]))
+    tutor.quiz(knowledge_point_id="fact")
+    assert tutor.quiz(knowledge_point_id="idea")["question"]["question_id"] == "o1"
+    assert all(kp["mastery"] == 0 for kp in tutor.status()["outline"][0]["knowledge_points"])
+    before = tutor.status()
+    with pytest.raises(TutorError, match="Unknown knowledge_point_id"):
+        tutor.quiz(knowledge_point_id="unknown")
+    assert tutor.status() == before
+
+
 def test_unverified_bank_question_is_never_posed(make_tutor):
     tutor = make_tutor(
         [

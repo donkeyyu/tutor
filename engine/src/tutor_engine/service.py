@@ -40,6 +40,7 @@ class Tutor:
     course: str
     clock: Any = time.time
     library: Library | None = None
+    demo: bool = False
 
     def _bank(self) -> dict[str, bank_mod.Question]:
         return bank_mod.load_bank(self.bank_path, self.sources_dir)
@@ -64,7 +65,7 @@ class Tutor:
     def status(self) -> dict[str, Any]:
         bank = self._bank()
         with self._tx() as progress:
-            step = policy.next_step(progress, self.clock())
+            step = policy.next_step(progress, self.clock(), self.demo)
             kp_id = step.get("knowledge_point_id", "")
             if kp_id:
                 kp = self._require_kp(progress, kp_id)
@@ -74,13 +75,14 @@ class Tutor:
                 if kp.chapter:
                     step["chapter"] = kp.chapter
             return {
+                "demo_mode": self.demo,
                 "next": step,
                 "intake_needed": progress.profile is None,
                 "profile": None
                 if progress.profile is None
                 else {f: getattr(progress.profile, f) for f in PROFILE_TEXT_FIELDS}
                 | {"teaching_strategy": progress.profile.teaching_strategy},
-                "teaching": teaching.guidance(progress.profile, kp_id) if kp_id else {},
+                "teaching": teaching.guidance(progress.profile, kp_id) if kp_id or self.demo else {},
                 "outline": policy.map_summary(progress),
                 "bank_size": len(bank),
                 "unverified_bank_questions": sum(
@@ -214,12 +216,28 @@ class Tutor:
 
     # -- assessment ---------------------------------------------------------
 
-    def quiz(self, knowledge_point_id: str = "") -> dict[str, Any]:
+    def quiz(self, knowledge_point_id: str = "", introduction: str = "") -> dict[str, Any]:
         bank = self._bank()
         now = self.clock()
         with self._tx() as progress:
+            if not isinstance(introduction, str):
+                raise TutorError("introduction must be teaching text, not a structured value.")
+            introduction = introduction.strip()
+            if progress.profile and progress.profile.teaching_strategy == "teach_first" and not introduction:
+                raise TutorError(
+                    "The learner asked to learn before practising. Supply introduction with a short "
+                    "explanation and worked example; it is displayed before the question, including "
+                    "when a question is already pending. Do not demand an answer before teaching."
+                )
+            teaching = {"introduction": introduction} if introduction else {}
             if progress.pending is not None:
-                return {"reposed": True, "question": progress.pending.public()}
+                if not knowledge_point_id or knowledge_point_id == progress.pending.knowledge_point_id:
+                    return {**teaching, "reposed": True, "question": progress.pending.public()}
+                if not self.demo:
+                    raise TutorError(
+                        "The open question is for a different objective. Leave it open while answering "
+                        "the learner's request, or use tutor_skip if they asked to drop or switch it."
+                    )
             step = policy.next_step(progress, now)
             kp_id = knowledge_point_id or step.get("knowledge_point_id", "")
             if not kp_id:
@@ -230,7 +248,7 @@ class Tutor:
             ]
             qualitative = kp.type in QUALITATIVE_TYPES
             candidates = bank_mod.poseable(bank, kp.question_ids, qualitative)
-            if not policy.is_mastered(progress, kp):
+            if not self.demo and not policy.is_mastered(progress, kp):
                 # A repeat of a question already answered right proves only that
                 # the learner remembers that answer. Since the last miss, each
                 # question counts once; a missed question may be retried.
@@ -268,7 +286,7 @@ class Tutor:
                 review=policy.is_mastered(progress, kp),
                 created_at=now,
             )
-            return {"reposed": False, "question": progress.pending.public()}
+            return {**teaching, "reposed": False, "question": progress.pending.public()}
 
     def _after_outcome(self, progress: Progress, kp: KnowledgePoint, passed: bool, now: float):
         if policy.is_mastered(progress, kp):
@@ -334,9 +352,14 @@ class Tutor:
                     raise TutorError("This question is graded by code; do not pass a verdict.")
                 score = grade_answer(pending, answer, blanks or [])
                 given = " | ".join(blanks) if blanks else answer
-                progress.attempts.append(
-                    Attempt(kp.id, pending.question_id, score, given, pending.review, now)
+                demo_repeat = self.demo and score >= 1.0 and not pending.review and any(
+                    a.knowledge_point_id == kp.id and a.question_id == pending.question_id
+                    and a.score >= 1.0 and not a.judged for a in progress.attempts
                 )
+                if not demo_repeat:
+                    progress.attempts.append(
+                        Attempt(kp.id, pending.question_id, score, given, pending.review, now)
+                    )
 
             progress.pending = None
             self._after_outcome(progress, kp, score >= 1.0, now)
@@ -347,7 +370,7 @@ class Tutor:
                 "explanation": pending.explanation,
                 "mastery": round(policy.mastery(progress, kp), 3),
                 "mastered": policy.is_mastered(progress, kp),
-                "next": policy.next_step(progress, now),
+                "next": policy.next_step(progress, now, self.demo),
             }
 
     def assess(
@@ -369,7 +392,7 @@ class Tutor:
                 Attempt(kp.id, "assess", 1.0 if passed else 0.0, learner_quote, False, now)
             )
             self._after_outcome(progress, kp, bool(passed), now)
-            return {"mastered": policy.is_mastered(progress, kp), "next": policy.next_step(progress, now)}
+            return {"mastered": policy.is_mastered(progress, kp), "next": policy.next_step(progress, now, self.demo)}
 
     def skip(self) -> dict[str, Any]:
         with self._tx() as progress:
@@ -377,7 +400,7 @@ class Tutor:
                 raise TutorError("No open question to skip.")
             progress.skipped.append(progress.pending.question_id)
             progress.pending = None
-            return {"skipped": True, "next": policy.next_step(progress, self.clock())}
+            return {"skipped": True, "next": policy.next_step(progress, self.clock(), self.demo)}
 
     def defer(self, knowledge_point_id: str) -> dict[str, Any]:
         with self._tx() as progress:
@@ -388,7 +411,7 @@ class Tutor:
                 progress.pending = None
             if kp.id not in progress.deferred:
                 progress.deferred.append(kp.id)
-            return {"deferred": kp.id, "next": policy.next_step(progress, self.clock())}
+            return {"deferred": kp.id, "next": policy.next_step(progress, self.clock(), self.demo)}
 
     # -- profile ------------------------------------------------------------
 

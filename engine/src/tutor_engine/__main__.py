@@ -32,6 +32,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--pdftotext", default="pdftotext")
     parser.add_argument("--learner", required=True)
     parser.add_argument("--course", required=True)
+    parser.add_argument("--demo", action="store_true", help="allow replaying bank questions and switching an unanswered demo")
     parser.add_argument("command", choices=COMMANDS)
     args = parser.parse_args(argv)
 
@@ -46,7 +47,7 @@ def main(argv: list[str] | None = None) -> int:
             else None
         )
         tutor = Tutor(
-            Store(args.db), args.bank, args.sources, args.learner, args.course, library=library
+            Store(args.db), args.bank, args.sources, args.learner, args.course, library=library, demo=args.demo
         )
         result = getattr(tutor, args.command)(**params)
     except (TutorError, json.JSONDecodeError, TypeError) as exc:

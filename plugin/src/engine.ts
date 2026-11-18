@@ -18,6 +18,7 @@ export interface EngineOptions {
   pdftotext: string
   learner: string
   course: string
+  demo?: boolean
 }
 
 /** The engine refused the call; the message tells the model what to do instead. */
@@ -41,6 +42,7 @@ export function callEngine(
     ...(opts.vault ? ['--vault', opts.vault, '--index-folder', opts.indexFolder, '--pdftotext', opts.pdftotext] : []),
     '--learner', opts.learner,
     '--course', opts.course,
+    ...(opts.demo ? ['--demo'] : []),
     command,
   ]
   return new Promise((resolve, reject) => {
