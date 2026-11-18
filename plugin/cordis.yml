@@ -1,6 +1,9 @@
 # Dev overlay. From a DeepSeek Harness source checkout:
 #   pnpm dsh web --patch /Users/chengqiyu/dev/tutor/plugin/cordis.yml
 # Plugin paths in a --patch overlay must be absolute.
+- id: ui-chat
+  config:
+    transcriptView: compact
 - insert:
     - id: tutor
       name: '/Users/chengqiyu/dev/tutor/plugin/src/index.ts'

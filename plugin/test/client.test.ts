@@ -54,8 +54,8 @@ function loadClient() {
       })
     },
   }, uiConversation: { events: { register: (definition: any) => definitions.push(definition) } } })
-  const renderCard = (props: any) => props.toolName === 'tutor_grade' ? views.get(props.toolName)(props)
-    : nodes.get('tutor-card')({ ...props, node: { id: props.block.callId, data: { toolName: props.toolName, block: props.block } } })
+  const renderCard = (props: any) =>
+    nodes.get('tutor-card')({ ...props, node: { id: props.block.callId, data: { toolName: props.toolName, block: props.block } } })
   return { views, nodes, frames, definitions, MarkdownText, renderCard }
 }
 
@@ -217,11 +217,16 @@ function project(definition: any, events: any[]) {
   return [...contexts.values()].map(context => definition.buildViewNode(context)).filter(Boolean)
 }
 
-test('question and knowledge cards stay outside the thinking group on live results and replay', () => {
+test('question, grading and knowledge cards stay outside the thinking group on live results and replay', () => {
   const { definitions, views, nodes } = loadClient()
   const definition = definitions.find(definition => definition.kind === 'tutor-card')
   assert.ok(nodes.has('tutor-card'))
-  for (const { props } of [quizProps(), knowledgeProps()]) {
+  const result = { correct: true, expected_answer: 'A', mastery: 0.5 }
+  const grade = {
+    toolName: 'tutor_grade', phase: 'result', t: (key: string) => key,
+    block: { callId: 'call-grade', kind: 'tool-result', isError: false, meta: gradeCard(result), content: [{ type: 'text', text: JSON.stringify(result) }] },
+  }
+  for (const props of [quizProps().props, grade, knowledgeProps().props]) {
     const events = callEvents(props)
     const [node] = project(definition, events)
     assert.ok(node)
@@ -234,15 +239,12 @@ test('question and knowledge cards stay outside the thinking group on live resul
     assert.equal(node.data.block.callId, props.block.callId)
     assert.deepEqual(node.data.block.content, props.block.content)
     assert.equal(project(definition, events)[0].key, node.key, 'replay uses the same card identity')
-    let inspected: string | undefined
-    const card = nodes.get('tutor-card')({ ...props, node, inspectCall: (id: string) => { inspected = id } })
+    const card = nodes.get('tutor-card')({ ...props, node, inspectCall: () => assert.fail('Inspect is hidden') })
     assert.equal(card.props['data-tutor-card'], props.toolName)
-    const inspect = elements(card).find(element => element.type === 'button' && element.children.includes('row.inspect'))
-    inspect.props.onClick()
-    assert.equal(inspected, props.block.callId)
-    const toolRow = views.get(props.toolName)(props)
+    assert.ok(!elements(card).some(element => element.type === 'button' && element.children.includes('row.inspect')))
+    const toolRow = views.get(props.toolName)({ ...props, inspect: () => assert.fail('Inspect is hidden') })
     assert.ok(!elements(toolRow).some(element => element.props?.['data-tutor-card']), 'thinking keeps only the tool record')
-    assert.ok(!elements(toolRow).some(element => element.type === 'img' || element.type === 'input'))
+    assert.ok(!elements(toolRow).some(element => ['img', 'input', 'button'].includes(element.type)))
   }
 })
 

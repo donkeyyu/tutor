@@ -6,46 +6,44 @@ window.__ModuleLoader__.load({
     const { MarkdownText } = require('@deepseek-ai/dsh-client-ui-primitives')
 
     const welcomeStyles = `
-      .tutor-frame { display:flex; flex-direction:column; height:100%; min-height:0; min-width:0; }
-      .tutor-welcome { box-sizing:border-box; flex:none; width:calc(100% - 32px); max-width:var(--dsh-composer-card-max-width, 960px); max-height:60dvh; overflow:auto; margin:16px auto 8px; padding:0 8px 16px; border-bottom:1px solid var(--dsw-alias-border-l1); color:var(--dsw-alias-label-primary); font-size:14px; line-height:1.7; overflow-wrap:anywhere; }
-      .tutor-welcome-header { display:flex; align-items:flex-start; justify-content:space-between; gap:12px; margin-bottom:8px; }
-      .tutor-welcome h2 { margin:0; padding-top:6px; font-size:22px; line-height:1.4; font-weight:600; }
-      .tutor-welcome p { margin:0 0 12px; }
-      .tutor-welcome-grid { display:grid; grid-template-columns:repeat(2, minmax(0, 1fr)); gap:24px; }
-      .tutor-welcome ul { margin:0; padding-left:20px; }
-      .tutor-welcome li + li { margin-top:8px; }
-      .tutor-welcome li span { color:var(--dsw-alias-label-secondary); }
-      .tutor-welcome summary { cursor:pointer; padding:8px 0; }
-      .tutor-welcome blockquote { margin:0; padding:12px 16px; border-radius:12px; background:var(--dsw-alias-markdown-code-block); overflow-wrap:anywhere; }
-      .tutor-welcome .tutor-memory { color:var(--dsw-alias-label-secondary); }
-      .tutor-welcome .tutor-welcome-footer { margin:12px 0 0; font-size:12px; color:var(--dsw-alias-label-secondary); }
-      .tutor-welcome button { flex:none; min-height:44px; padding:8px 16px; border:1px solid var(--dsw-alias-border-l1); border-radius:12px; background:transparent; color:inherit; font:inherit; cursor:pointer; }
+      .tutor-frame {
+        display:flex; flex-direction:column; height:100%; min-height:0; min-width:0;
+        --tutor-callout-bg:light-dark(#EDF3FE, color-mix(in srgb, var(--dsw-alias-state-business-primary) 20%, var(--dsw-alias-bg-base)));
+      }
+      .tutor-frame [data-conversation-scroll] button[class$="_inspectButton"] { display:none; }
+      .tutor-frame-home { justify-content:safe center; overflow:auto; }
+      .tutor-frame-home > [data-conversation-scroll] { flex:none; }
+      /* DSH owns the home headline. The workspace and input are its siblings. */
+      .tutor-frame [data-composer-seat] [class$="_composerHero"] > [class$="_root"]:has([class$="_fishHitbox"]) { display:none; }
+      .tutor-welcome { box-sizing:border-box; flex:none; width:calc(100% - 32px); max-width:var(--dsh-composer-card-max-width, 960px); max-height:55dvh; overflow:auto; margin:24px auto 12px; padding:4px; color:var(--dsw-alias-label-primary); font-size:14px; line-height:1.65; overflow-wrap:anywhere; }
+      .tutor-frame-home .tutor-welcome { max-height:none; }
+      .tutor-welcome-header { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; column-gap:12px; }
+      .tutor-welcome h2 { margin:0; font-size:24px; line-height:1.3; font-weight:600; }
+      .tutor-welcome p { margin:8px 0 0; }
+      .tutor-welcome-example { margin:16px 0 0; padding:12px 16px; border-radius:12px; background:var(--tutor-callout-bg); }
+      .tutor-welcome-example figcaption { margin-bottom:4px; font-size:12px; font-weight:600; }
+      .tutor-welcome-example blockquote { margin:0; }
+      .tutor-welcome .tutor-memory { font-size:12px; color:var(--dsw-alias-label-secondary); }
+      .tutor-welcome button { max-width:100%; min-height:44px; padding:8px 12px; border:0; border-radius:8px; background:transparent; color:var(--dsw-alias-label-secondary); font:inherit; cursor:pointer; }
       .tutor-welcome button:hover { background:var(--dsw-alias-interactive-bg-hover); }
-      .tutor-welcome:focus-visible, .tutor-welcome button:focus-visible, .tutor-welcome summary:focus-visible { outline:2px solid var(--dsw-alias-state-business-primary); outline-offset:3px; }
-      @media (max-width:640px) { .tutor-welcome-grid { grid-template-columns:minmax(0, 1fr); gap:8px; } .tutor-welcome h2 { font-size:20px; } }
+      .tutor-welcome:focus-visible, .tutor-welcome button:focus-visible { outline:2px solid var(--dsw-alias-state-business-primary); outline-offset:2px; }
+      @media (max-width:640px) { .tutor-welcome { margin-top:12px; } .tutor-welcome h2 { font-size:20px; } }
     `
 
-    function TutorWelcomeFrame({ children }) {
+    function TutorWelcomeFrame({ hero, children }) {
       // Demo visits always start with guidance; dismissing it never changes learner data.
       const [visible, setVisible] = useState(true)
-      return h('div', { className: 'tutor-frame' },
+      return h('div', { className: hero && visible ? 'tutor-frame tutor-frame-home' : 'tutor-frame' },
         h('style', null, welcomeStyles),
         visible && h('section', { className: 'tutor-welcome', 'data-tutor-welcome': true, lang: 'zh-CN', 'aria-label': '学习助教欢迎与使用引导', tabIndex: 0 },
           h('div', { className: 'tutor-welcome-header' },
             h('h2', null, '你好，我是你的学习助教'),
             h('button', { type: 'button', onClick: () => setVisible(false) }, '收起引导')),
-          h('p', null, '我会陪你读教材、讲清知识点，再用练习检查掌握情况。'),
-          h('p', { className: 'tutor-memory' }, '我会记录你提供的学习信息和交流偏好，方便后续接着学；你也可以随时补充或修改。'),
-          h('p', null, '在下方聊天框告诉我：'),
-          h('div', { className: 'tutor-welcome-grid' },
-            h('ul', null,
-              h('li', null, h('strong', null, '年级与基础：'), h('span', null, '你读几年级，哪些地方还不熟？')),
-              h('li', null, h('strong', null, '想学什么：'), h('span', null, '哪一科、哪个知识点？演示可先体验七年级数学「有理数」。')),
-              h('li', null, h('strong', null, '希望我怎么讲：'), h('span', null, '多举例、一步步提示，或先试做再讲。'))),
-            h('details', null,
-              h('summary', null, '查看填写示例'),
-              h('blockquote', null, '我读七年级，想学数学的有理数。请用中文，先举例，再一步步带我练习。今天大约有 15 分钟。'))),
-          h('p', { className: 'tutor-welcome-footer' }, '演示每次打开都会展示这段引导，已有学习档案会保留，无需重复填写。')),
+          h('p', null, '在下方告诉我你的年级、想学什么，以及你喜欢的讲解方式。'),
+          h('figure', { className: 'tutor-welcome-example' },
+            h('figcaption', null, '可以这样开场'),
+            h('blockquote', null, '我读七年级，想学有理数。请先举个例子，再带我做一道练习。')),
+          h('p', { className: 'tutor-memory' }, '我会记住你的学习信息和偏好，下次可以接着学。')),
         children)
     }
 
@@ -100,7 +98,7 @@ window.__ModuleLoader__.load({
       }
     }
 
-    function TutorCard({ toolName, phase, block, inspect, t, useInput, inputActions, openFile }) {
+    function TutorCard({ toolName, phase, block, t, useInput, inputActions, openFile }) {
       const [selected, setSelected] = useState([])
       const [continuationError, setContinuationError] = useState('')
       const input = useInput(state => state)
@@ -153,10 +151,10 @@ window.__ModuleLoader__.load({
         role: block.isError ? 'alert' : undefined,
         style: {
           boxSizing: 'border-box', minWidth: 0, width: '100%', maxWidth: '72ch', margin: '8px 0', padding: '24px',
-          borderRadius: '16px', background: 'var(--dsw-alias-markdown-code-block)', color: 'var(--dsw-alias-label-primary)',
+          borderRadius: '16px', background: card ? 'var(--tutor-callout-bg)' : 'var(--dsw-alias-markdown-code-block)', color: 'var(--dsw-alias-label-primary)',
         },
       },
-      h('h3', { style: { margin: '0 0 20px', fontSize: '0.875rem', fontWeight: 500, color: 'var(--dsw-alias-label-secondary)' } }, card ? meta.title : toolName),
+      h('h3', { style: { margin: '0 0 20px', fontSize: '0.875rem', fontWeight: 600 } }, card ? meta.title : toolName),
       ...(paperLink ? [paperLink] : []),
       card
         ? h(MarkdownText, { text: question?.body ?? meta.body, labels })
@@ -190,45 +188,34 @@ window.__ModuleLoader__.load({
         input.draft !== answer && h('button', {
           type: 'button', disabled: input.phase !== 'plain',
           onClick: () => inputActions.insertText(answer, inputActions.captureInsertion()),
-        }, '插入答案')),
-      inspect && h('button', {
-        type: 'button', onClick: inspect,
-        style: { marginTop: '16px', padding: '4px 0', border: 0, background: 'transparent', font: 'inherit', fontSize: '0.75rem', color: 'var(--dsw-alias-label-secondary)', textDecoration: 'underline', textUnderlineOffset: '3px', cursor: 'pointer' },
-      }, t('row.inspect')))
+        }, '插入答案')))
     }
 
     function TutorTool(props) {
       const meta = props.phase === 'result' && cardMeta(props.toolName, props.block)
       if (!meta) return h(TutorCard, props)
-      return h('div', { 'data-tutor-tool': props.toolName, style: { color: 'var(--dsw-alias-label-secondary)' } },
-        meta.title,
-        props.inspect && h('button', {
-          type: 'button', onClick: props.inspect,
-          style: { marginLeft: '12px', padding: 0, border: 0, background: 'transparent', color: 'inherit', font: 'inherit', cursor: 'pointer', textDecoration: 'underline', textUnderlineOffset: '3px' },
-        }, props.t('row.inspect')))
+      return h('div', { 'data-tutor-tool': props.toolName, style: { color: 'var(--dsw-alias-label-secondary)' } }, meta.title)
     }
 
-    function TutorConversationCard({ node, inspectCall, ...props }) {
-      return h(TutorCard, {
-        ...props, ...node.data, phase: 'result',
-        inspect: inspectCall && (() => inspectCall(node.data.block.callId)),
-      })
+    function TutorConversationCard({ node, ...props }) {
+      return h(TutorCard, { ...props, ...node.data, phase: 'result' })
     }
+
+    const cardTools = ['tutor_quiz', 'tutor_grade', 'tutor_textbook', 'tutor_paper']
 
     return {
       inject: ['slots', 'uiConversation'],
       apply(ctx) {
         ctx.slots.inject('conversation.hero.frame', () =>
           ctx.slots.register({ name: 'conversation.hero.frame', id: 'tutor-welcome' }, TutorWelcomeFrame))
-        const cardTool = name => name === 'tutor_quiz' || name === 'tutor_textbook' || name === 'tutor_paper'
         // Project saved results at Turn level so both process disclosures leave them visible.
         ctx.uiConversation.events.register({
           kind: 'tutor-card', target: 'chat',
           match: {
-            'tool/call': event => cardTool(event.data.name) ? { id: String(event.data.callId), role: 'start' } : null,
+            'tool/call': event => cardTools.includes(event.data.name) ? { id: String(event.data.callId), role: 'start' } : null,
             'tool/result': event => event.surfaceOp === 'append'
               ? { id: String(event.data.message.source.callId), role: 'update' } : null,
-            'tool/ptc-dispatch': event => cardTool(event.data.name) ? { id: String(event.data.subCallId), role: 'start' } : null,
+            'tool/ptc-dispatch': event => cardTools.includes(event.data.name) ? { id: String(event.data.subCallId), role: 'start' } : null,
           },
           start: () => null,
           update: () => null,
@@ -239,7 +226,7 @@ window.__ModuleLoader__.load({
             const nested = event.type === 'tool/ptc-dispatch'
             const call = context.matches.find(match => match.event.type === 'tool/call')
             const toolName = nested ? event.data.name : call?.event.data.name
-            if (!cardTool(toolName)) return null
+            if (!cardTools.includes(toolName)) return null
             const block = {
               kind: 'tool-result', callId: context.id, meta: event.data.meta,
               content: nested ? event.data.content ?? [] : event.data.message.content,
@@ -255,9 +242,9 @@ window.__ModuleLoader__.load({
         })
         ctx.slots.inject('conversation.chat.node', () =>
           ctx.slots.register({ name: 'conversation.chat.node', key: 'tutor-card', locale: 'conversation' }, TutorConversationCard))
-        for (const key of ['tutor_quiz', 'tutor_grade', 'tutor_textbook', 'tutor_paper']) {
+        for (const key of cardTools) {
           ctx.slots.inject('tool.call.toolview', () =>
-            ctx.slots.register({ name: 'tool.call.toolview', key, locale: 'conversation' }, key === 'tutor_grade' ? TutorCard : TutorTool))
+            ctx.slots.register({ name: 'tool.call.toolview', key, locale: 'conversation' }, TutorTool))
         }
       },
     }
